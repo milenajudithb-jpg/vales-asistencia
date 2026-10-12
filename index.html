@@ -432,6 +432,21 @@ table.tbl{width:100%;border-collapse:collapse;font-size:14.5px}
   body{background:#fff}
   .card,.kpi,.bloque{box-shadow:none}
 }
+/* ───── Candado: el tablero pide PIN para entrar ───── */
+body.bloqueado .tabs,body.bloqueado #btn-datos{display:none}
+.candado{max-width:420px;margin:24px auto 8px;text-align:center}
+.candado-ico{width:56px;height:56px;border-radius:50%;margin:2px auto 12px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+.candado h3{font-size:20px}
+.candado .sub{margin:4px 0 16px}
+.candado .campos{text-align:left}
+.candado .pin{font-size:26px;letter-spacing:.35em;text-align:center;font-weight:600}
+.candado .check{justify-content:center}
+.candado-nota{text-align:center;margin-top:-12px}
+.candado-pie{margin:14px 0 0}
+/* ───── Repuestos: se registran por código ───── */
+.mono-rep{font-family:var(--font-mono);letter-spacing:-.01em;overflow-wrap:anywhere}
+.rep-n{font-size:13px;color:var(--muted)}
+.rep-nom:empty{display:none}
 </style>
 </head>
 <body>
@@ -501,7 +516,6 @@ table.tbl{width:100%;border-collapse:collapse;font-size:14.5px}
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <datalist id="dl-unidades"></datalist>
 <datalist id="dl-mecanicos"></datalist>
-<datalist id="dl-repuestos"></datalist>
 <datalist id="dl-codigos"></datalist>
 
 <script>
@@ -513,7 +527,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:14.5px}
 /* URL de la aplicación web de Apps Script (termina en /exec).
    Se obtiene en Apps Script ▸ Implementar ▸ Gestionar implementaciones. */
 const API_URL = "https://script.google.com/macros/s/AKfycbyPL5emoUqp7Ecbqmpld6U-w7XqAkYGkOuNuzhiBUGs2-d_T-rIDXOCNA4VzExO1VtU/exec";
-const VERSION = '1.0';
+const VERSION = '1.1';
 const PREF = 'va-';
 const MAX_FOTOS = 12;
 
@@ -825,19 +839,21 @@ function indexar() {
     hoy,
   ));
   vales.sort((a, b) => (b.v.fecha + b.v.hora + b.id).localeCompare(a.v.fecha + a.v.hora + a.id));
-  // Historial de repuestos: código y si regresa pieza vieja, para sugerir al escribir.
-  const repHist = new Map();
+  // Repuestos por código: su nombre (si está en el catálogo) y si regresa pieza vieja,
+  // para sugerir al escribir el código. El catálogo manda sobre lo ya registrado.
+  const porCodigo = new Map();
   (d.lineas || []).forEach(l => {
-    const k = normal(l.descripcion);
-    if (k) repHist.set(k, { descripcion: l.descripcion, codigo: l.codigo || '', requiereVieja: l.requiereVieja !== false });
+    const k = normal(l.codigo);
+    if (!k) return;
+    const nom = normal(l.descripcion) === k ? '' : limpiar(l.descripcion, 150);
+    const ant = porCodigo.get(k);
+    porCodigo.set(k, { codigo: limpiar(l.codigo, 60), descripcion: nom || (ant ? ant.descripcion : ''), requiereVieja: l.requiereVieja !== false });
   });
   ((d.catalogos && d.catalogos.repuestos) || []).forEach(r => {
-    const k = normal(r.descripcion);
-    if (k) repHist.set(k, { descripcion: r.descripcion, codigo: r.codigo || '', requiereVieja: !r.consumible, catalogo: true });
+    const k = normal(r.codigo);
+    if (k) porCodigo.set(k, { codigo: limpiar(r.codigo, 60), descripcion: normal(r.descripcion) === k ? '' : limpiar(r.descripcion, 150), requiereVieja: !r.consumible, catalogo: true });
   });
-  const porCodigo = new Map();
-  repHist.forEach(r => { if (r.codigo) porCodigo.set(normal(r.codigo), r); });
-  S.idx = { vales: vales, porId: new Map(vales.map(x => [x.id, x])), repHist: repHist, porCodigo: porCodigo };
+  S.idx = { vales: vales, porId: new Map(vales.map(x => [x.id, x])), porCodigo: porCodigo };
   llenarListas();
 }
 
@@ -856,9 +872,34 @@ function llenarListas() {
   };
   poner('dl-unidades', unicos((cat.unidades || []).concat(usados('unidad'))));
   poner('dl-mecanicos', unicos((cat.mecanicos || []).concat(usados('mecanico'), usados('apoyo'))));
-  const reps = S.idx ? [...S.idx.repHist.values()] : [];
-  poner('dl-repuestos', unicos(reps.map(r => r.descripcion)));
-  poner('dl-codigos', unicos(reps.map(r => r.codigo).filter(Boolean)));
+  const reps = S.idx ? [...S.idx.porCodigo.values()] : [];
+  const nombres = new Map(reps.map(r => [r.codigo, r.descripcion]));
+  poner('dl-codigos', unicos(reps.map(r => r.codigo).filter(Boolean)), c => nombres.get(c) || null);
+}
+
+/* El repuesto se registra solo con su código. Si el código está en el catálogo
+   (o ya se usó antes con nombre), también se muestra y se guarda su nombre. */
+function infoCodigo(codigo) {
+  const k = normal(codigo);
+  return (k && S.idx && S.idx.porCodigo.get(k)) || null;
+}
+
+/* Lo que va a la hoja: el código (escrito como en el catálogo, si está) y, en «Repuesto»,
+   el nombre del catálogo o, si no lo tiene, el mismo código. */
+function codigoYNombre(l) {
+  const cod = limpiar(l.codigo, 60);
+  const r = infoCodigo(cod);
+  const codigo = r && r.codigo ? r.codigo : cod;
+  return { codigo: codigo, descripcion: limpiar((r && r.descripcion) || codigo, 150) };
+}
+
+/* Para mostrar: el código y, aparte, el nombre si es distinto del código. */
+function etiquetaRep(l) {
+  return limpiar(l.codigo, 60) || limpiar(l.descripcion, 150) || 'Repuesto';
+}
+function nombreRep(l) {
+  const n = limpiar(l.descripcion, 150);
+  return limpiar(l.codigo) && n && normal(n) !== normal(l.codigo) ? n : '';
 }
 
 /* Rango de fechas del filtro de periodo. */
@@ -1341,9 +1382,11 @@ async function cargar() {
     S.error = null;
     S.ultimaCarga = Date.now();
     if (d.publico) store.set('cache', { t: S.ultimaCarga, d: d }); else store.del('cache');
+    store.set('pidePin', !d.publico);
   } catch (e) {
     if (e instanceof ApiError && /^PIN_/.test(e.codigo)) {
       S.error = 'pin';
+      store.set('pidePin', true);
       S.errorPin = e.codigo === 'PIN_REQUERIDO' ? '' : e.message;
       S.datos = null;
       S.idx = null;
@@ -1369,7 +1412,7 @@ function pintarRed() {
   let txt;
   if (!apiLista()) { cls = 'mal'; txt = 'Falta conectar la hoja'; }
   else if (S.cargando) { cls = 'carga'; txt = S.datos ? 'Actualizando…' : 'Conectando con la hoja…'; }
-  else if (S.error === 'pin') { cls = 'mal'; txt = 'Pide PIN para ver'; }
+  else if (S.error === 'pin') { cls = 'mal'; txt = 'Pide PIN para entrar'; }
   else if (S.error) {
     cls = 'mal';
     const c = store.get('cache', null);
@@ -1545,34 +1588,51 @@ function pantallaConfig() {
 }
 
 function pantallaPinLectura() {
-  const input = h('input', { class: 'in pin', type: 'password', inputmode: 'numeric', autocomplete: 'off', 'aria-label': 'PIN', placeholder: '••••', onkeydown: e => { if (e.key === 'Enter') entrar(); } });
+  const input = h('input', {
+    class: 'in pin', type: 'password', inputmode: 'numeric', autocomplete: 'off', maxlength: '12', 'aria-label': 'PIN', placeholder: '••••',
+    onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); entrar(); } },
+  });
   const chk = h('input', { type: 'checkbox' });
   const err = h('div', { class: 'err', role: 'alert' }, S.errorPin || '');
   const btn = h('button', { type: 'button', class: 'btn pri block', onclick: () => entrar() }, ic('i-lock'), 'Entrar');
+  let ocupado = false;
   async function entrar() {
+    if (ocupado) return;
     const pin = input.value.trim();
-    if (!pin) { err.textContent = 'Escribe tu PIN.'; return; }
+    if (!pin) { err.textContent = 'Escribe tu PIN.'; input.focus(); return; }
+    ocupado = true;
     btn.disabled = true;
     err.textContent = '';
     try {
       const d = await api('datos', { pin: pin }, { tiempo: 60000 });
       (chk.checked ? store : sesion).set('lectura', pin);
+      // Si el equipo es suyo y su PIN puede registrar, al firmar ya no se lo vuelve a pedir.
+      if (chk.checked && d.usuario && d.usuario.rol !== 'consulta') store.set('firma', { pin: pin, nombre: d.usuario.nombre, rol: d.usuario.rol });
+      store.set('pidePin', !d.publico);
       aplicarDatos(d, false);
       S.error = null;
+      S.errorPin = '';
       S.ultimaCarga = Date.now();
       pintarRed();
       refrescarVista(true);
+      if (d.usuario && d.usuario.nombre) toast('Hola, ' + nombre(d.usuario.nombre) + '.');
     } catch (e) {
+      ocupado = false;
       btn.disabled = false;
-      err.textContent = e.message;
+      err.textContent = e.message || 'No se pudo entrar. Intenta de nuevo.';
       input.select();
     }
   }
-  setTimeout(() => input.focus(), 50);
-  return h('div', { class: 'card card-pad', style: { maxWidth: '420px', margin: '10px auto' } },
-    h('h3', null, 'Este tablero pide PIN'),
-    h('p', { class: 'sub' }, 'Escribe tu PIN de bodega o de consulta para ver los vales.'),
-    h('div', { class: 'campos' }, input, h('label', { class: 'check' }, chk, 'Recordar en este equipo'), err, btn));
+  setTimeout(() => { try { input.focus({ preventScroll: true }); } catch (e) { /* nada */ } }, 60);
+  return h('div', { class: 'card card-pad candado' },
+    h('div', { class: 'candado-ico' }, ic('i-lock', 'lg')),
+    h('h3', null, 'Escribe tu PIN para entrar'),
+    h('p', { class: 'sub' }, 'Solo el personal con PIN puede ver y registrar los vales de asistencia.'),
+    h('div', { class: 'campos' }, input,
+      h('label', { class: 'check' }, chk, 'Recordar mi PIN en este equipo'),
+      h('div', { class: 'ayuda-c candado-nota' }, 'Solo si el teléfono o la computadora es tuyo.'),
+      err, btn),
+    h('p', { class: 'ayuda-c candado-pie' }, '¿No tienes PIN? Pídelo a quien administra el tablero.'));
 }
 
 function cabeceraForm(titulo, sub, volverA) {
@@ -1595,7 +1655,7 @@ function tarjetaVale(x, modo) {
   else if (modo === 'recibir') estado = chip('st-bad', 'i-bad', x.t.falta === 1 ? 'Falta 1 pieza vieja' : 'Faltan ' + fmtN(x.t.falta) + ' piezas viejas');
   else estado = chipEstado(x.estado);
   const l3 = modo === 'recibir'
-    ? [nombre(v.mecanico), 'Falta: ' + x.lineas.filter(l => l.falta > 0).map(l => l.descripcion + ' (' + fmtN(l.falta) + ')').join(', ')]
+    ? [nombre(v.mecanico), 'Falta: ' + x.lineas.filter(l => l.falta > 0).map(l => etiquetaRep(l) + ' (' + fmtN(l.falta) + ')').join(', ')]
     : [nombre(v.mecanico), plural(x.lineas.length, 'repuesto', 'repuestos'), 'entregó ' + nombre(v.entrego), fechaCorta(v.fecha)];
   const accion = modo === 'liquidar' ? ['Liquidar', 'liquidar/' + x.id] : modo === 'recibir' ? ['Recibir', 'recibir/' + x.id] : null;
   return h('div', { class: 'vcard' },
@@ -1890,8 +1950,8 @@ function formSalida(cont, tipo, x) {
     if (!m.lineas.length) { toast('Agrega al menos un repuesto.', true); return false; }
     refs.forEach((r, i) => {
       const l = m.lineas[i];
-      r.fDesc.error(limpiar(l.descripcion) ? '' : 'Escribe el repuesto.');
-      if (!limpiar(l.descripcion) && !primero) primero = r.fDesc;
+      r.fCod.error(limpiar(l.codigo) ? '' : 'Escribe el código del repuesto.');
+      if (!limpiar(l.codigo) && !primero) primero = r.fCod;
       r.errCant(num(l.salio) > 0 ? '' : 'La cantidad debe ser mayor que cero.');
       if (!(num(l.salio) > 0) && !primero) primero = r.el;
       if (registrar && l.error && !primero) primero = r.el;
@@ -1913,7 +1973,7 @@ function formSalida(cont, tipo, x) {
       entrego: registrar ? m.vale.entrego : '',
     };
     const lineas = m.lineas.map(l => {
-      const o = { lineaId: l.lineaId, codigo: limpiar(l.codigo, 60), descripcion: limpiar(l.descripcion, 150), salio: num(l.salio), requiereVieja: !!l.requiereVieja };
+      const o = Object.assign({ lineaId: l.lineaId }, codigoYNombre(l), { salio: num(l.salio), requiereVieja: !!l.requiereVieja });
       if (registrar) Object.assign(o, { devuelto: num(l.devuelto), utilizado: num(l.utilizado), viejaRec: l.requiereVieja ? num(l.viejaRec) : 0 });
       return o;
     });
@@ -1949,10 +2009,14 @@ function formSalida(cont, tipo, x) {
 }
 
 function tarjetaSalida(m, l, i, registrar, quitar, cambio) {
-  const desc = h('input', { class: 'in', list: 'dl-repuestos', value: l.descripcion, autocomplete: 'off', maxlength: '150', placeholder: 'Ej. Filtro de aceite' });
-  const cod = h('input', { class: 'in', list: 'dl-codigos', value: l.codigo, autocomplete: 'off', maxlength: '60', placeholder: 'Si lo tiene' });
-  const fDesc = campo('Repuesto', desc, { req: true });
-  const fCod = campo('Código', cod, { opc: true });
+  // Solo se pide el código del repuesto; si está en el catálogo, su nombre aparece debajo.
+  const cod = h('input', {
+    class: 'in', list: 'dl-codigos', value: l.codigo, autocomplete: 'off', autocapitalize: 'characters',
+    spellcheck: 'false', maxlength: '60', placeholder: 'Escribe el código',
+  });
+  const fCod = campo('Código del repuesto', cod, { req: true });
+  const nom = h('div', { class: 'ayuda-c rep-nom', 'aria-live': 'polite' });
+  fCod.insertBefore(nom, fCod.lastChild);
   const errCant = h('div', { class: 'err', role: 'alert' });
   let liq = null;
   const etiquetaCant = registrar ? 'Cantidad que salió' : 'Cantidad que sale';
@@ -1961,29 +2025,27 @@ function tarjetaSalida(m, l, i, registrar, quitar, cambio) {
   swInp.checked = !!l.requiereVieja;
   const sw = h('label', { class: 'switch' }, swInp, h('span', { class: 'pista', 'aria-hidden': 'true' }), h('span', null, 'Debe regresar la pieza vieja'));
   const sugerir = () => {
-    const r = S.idx && S.idx.repHist.get(normal(desc.value));
-    if (!r) return;
-    if (!limpiar(cod.value) && r.codigo) { cod.value = r.codigo; l.codigo = r.codigo; }
-    if (!l.tocoSwitch && l.requiereVieja !== r.requiereVieja) { l.requiereVieja = r.requiereVieja; swInp.checked = r.requiereVieja; if (liq) liq.ajustar(); }
+    const r = infoCodigo(cod.value);
+    nom.textContent = r && r.descripcion ? r.descripcion : '';
+    const req = r ? r.requiereVieja : true;
+    if (!l.tocoSwitch && l.requiereVieja !== req) { l.requiereVieja = req; swInp.checked = req; if (liq) liq.ajustar(); }
   };
-  desc.addEventListener('input', () => { l.descripcion = desc.value; sugerir(); cambio(); });
-  cod.addEventListener('input', () => { l.codigo = cod.value; cambio(); });
-  cod.addEventListener('change', () => {
-    const r = S.idx && S.idx.porCodigo.get(normal(cod.value));
-    if (r && !limpiar(desc.value)) { desc.value = r.descripcion; l.descripcion = r.descripcion; sugerir(); cambio(); }
-  });
+  cod.addEventListener('input', () => { l.codigo = cod.value; sugerir(); cambio(); });
   if (registrar) liq = controlesLiq(l, { alCambiar: cambio });
+  const r0 = infoCodigo(l.codigo);
+  nom.textContent = r0 && r0.descripcion ? r0.descripcion
+    : !limpiar(l.codigo) && limpiar(l.descripcion) ? 'Registrado antes como: ' + limpiar(l.descripcion, 150) : '';
   const el = h('div', { class: registrar ? 'liq nueva' : 'linea' },
     h('div', { class: registrar ? 'liq-cuerpo' : '' },
       h('div', { class: 'linea-top', style: registrar ? { marginTop: '10px' } : null },
         h('b', null, 'Repuesto ' + (i + 1)),
         m.lineas.length > 1 ? h('button', { type: 'button', class: 'btn xs ghost der', onclick: quitar, 'aria-label': 'Quitar repuesto ' + (i + 1) }, ic('i-close', 'sm'), 'Quitar') : null),
-      h('div', { class: 'campos c2' }, fDesc, fCod),
+      fCod,
       h('div', { class: 'fila-cant' },
         h('div', { class: 'campo' }, h('span', { class: 'lbl', 'aria-hidden': 'true' }, etiquetaCant), cant.el, errCant),
         sw)),
     liq ? liq.el : null);
-  return { el: el, fDesc: fDesc, errCant: msg => { errCant.textContent = msg || ''; } };
+  return { el: el, fCod: fCod, errCant: msg => { errCant.textContent = msg || ''; } };
 }
 
 /* ═══════════════════════ Formulario: liquidar ═══════════════════════ */
@@ -2031,7 +2093,7 @@ function formLiquidar(cont, x) {
     const c = controlesLiq(l, { alCambiar: cambio, conInterruptor: true });
     return h('div', { class: 'liq' },
       h('div', { class: 'liq-cab' },
-        h('div', { style: { minWidth: 0 } }, h('div', { class: 'nom' }, l.descripcion), l.codigo ? h('div', { class: 'cod' }, l.codigo) : null),
+        h('div', { style: { minWidth: 0 } }, h('div', { class: 'nom mono-rep' }, etiquetaRep(l)), nombreRep(l) ? h('div', { class: 'rep-n' }, nombreRep(l)) : null),
         h('div', { class: 'salio' }, h('b', null, fmtN(l.salio)), h('span', null, 'salió'))),
       c.el);
   }));
@@ -2078,9 +2140,9 @@ function formLiquidar(cont, x) {
     let malo = null;
     refsNuevas.forEach((r, i) => {
       const l = m.nuevas[i];
-      r.fDesc.error(limpiar(l.descripcion) ? '' : 'Escribe el repuesto.');
+      r.fCod.error(limpiar(l.codigo) ? '' : 'Escribe el código del repuesto.');
       r.errCant(num(l.salio) > 0 ? '' : 'La cantidad debe ser mayor que cero.');
-      if (!malo && (!limpiar(l.descripcion) || !(num(l.salio) > 0))) malo = r.el;
+      if (!malo && (!limpiar(l.codigo) || !(num(l.salio) > 0))) malo = r.el;
     });
     if (!malo && t.error) malo = [...cont.querySelectorAll('.liq')].find(el => el.querySelector('.liq-pie .st-bad .ic use[href="#i-alert"]'));
     if (malo || t.error) {
@@ -2096,7 +2158,7 @@ function formLiquidar(cont, x) {
       payload: {
         id: x.id, fecha: m.liq.fecha, hora: m.liq.hora, obs: limpiar(m.liq.obs, 500), sinFotoMotivo: m.sinFotoMotivo,
         lineas: m.lineas.map(l => ({ lineaId: l.lineaId, devuelto: num(l.devuelto), utilizado: num(l.utilizado), viejaRec: l.requiereVieja ? num(l.viejaRec) : 0, requiereVieja: !!l.requiereVieja })),
-        nuevas: m.nuevas.map(l => ({ lineaId: l.lineaId, codigo: limpiar(l.codigo, 60), descripcion: limpiar(l.descripcion, 150), salio: num(l.salio), requiereVieja: !!l.requiereVieja, devuelto: num(l.devuelto), utilizado: num(l.utilizado), viejaRec: l.requiereVieja ? num(l.viejaRec) : 0 })),
+        nuevas: m.nuevas.map(l => Object.assign({ lineaId: l.lineaId }, codigoYNombre(l), { salio: num(l.salio), requiereVieja: !!l.requiereVieja, devuelto: num(l.devuelto), utilizado: num(l.utilizado), viejaRec: l.requiereVieja ? num(l.viejaRec) : 0 })),
       },
       fotos: m.fotos.map(f => ({ fotoId: f.fotoId, tipo: f.tipo, data: f.data })),
     };
@@ -2130,10 +2192,10 @@ function formRecibir(cont, x) {
       queda > 0 ? chip('st-bad', 'i-bad', 'Seguirán faltando ' + fmtN(queda)) : x.t.dif > 0 ? chip('st-bad', 'i-bad', 'Quedan repuestos sin justificar') : chip('st-ok', 'i-ok', 'Quedará completo'));
   };
   const filas = pend.map(l => {
-    const st = stepper({ valor: 0, max: l.falta, etiqueta: 'Recibe ahora: ' + l.descripcion, alCambiar: v => { m.recibe[l.lineaId] = v; m.sucio = true; pintarBarra(); } });
+    const st = stepper({ valor: 0, max: l.falta, etiqueta: 'Recibe ahora: ' + etiquetaRep(l), alCambiar: v => { m.recibe[l.lineaId] = v; m.sucio = true; pintarBarra(); } });
     return h('div', { class: 'liq' },
       h('div', { class: 'liq-cab' },
-        h('div', { style: { minWidth: 0 } }, h('div', { class: 'nom' }, l.descripcion), l.codigo ? h('div', { class: 'cod' }, l.codigo) : null),
+        h('div', { style: { minWidth: 0 } }, h('div', { class: 'nom mono-rep' }, etiquetaRep(l)), nombreRep(l) ? h('div', { class: 'rep-n' }, nombreRep(l)) : null),
         h('div', { class: 'salio' }, h('b', null, fmtN(l.falta)), h('span', null, l.falta === 1 ? 'falta' : 'faltan'))),
       h('div', { class: 'liq-cuerpo' },
         h('div', { class: 'liq-fila' },
@@ -2244,7 +2306,7 @@ function barraFiltros(alCambiar) {
   const desde = h('input', { class: 'in', type: 'date', value: f.desde, 'aria-label': 'Desde', onchange: () => { f.desde = desde.value; cambio(); } });
   const hasta = h('input', { class: 'in', type: 'date', value: f.hasta, 'aria-label': 'Hasta', onchange: () => { f.hasta = hasta.value; cambio(); } });
   let qT = 0;
-  const q = h('input', { class: 'in', type: 'search', value: f.q, placeholder: 'Vale, unidad, repuesto…', 'aria-label': 'Buscar', oninput: () => { clearTimeout(qT); qT = setTimeout(() => { f.q = q.value; cambio(); }, 180); } });
+  const q = h('input', { class: 'in', type: 'search', value: f.q, placeholder: 'Vale, unidad, código…', 'aria-label': 'Buscar', oninput: () => { clearTimeout(qT); qT = setTimeout(() => { f.q = q.value; cambio(); }, 180); } });
   const cDesde = campo('Desde', desde);
   const cHasta = campo('Hasta', hasta);
   const activos = h('div', { class: 'activos' });
@@ -2368,7 +2430,7 @@ function contenidoTablero() {
     conFaltaPieza.length ? h('div', { class: 'tabla-wrap' }, h('table', { class: 'tbl' }, h('tbody', null, conFaltaPieza.slice(0, 8).map(x => h('tr', { class: 'clic', tabindex: '0', onclick: () => abrirDetalle(x.id), onkeydown: e => { if (e.key === 'Enter') abrirDetalle(x.id); } },
       h('td', null, h('span', { class: 'mono' }, x.id)),
       h('td', null, h('div', { class: 'nom' }, x.v.unidad), h('div', { class: 'muted', style: { fontSize: '13px' } },
-        x.lineas.filter(l => l.falta > 0 || l.dif > 0).map(l => l.descripcion + ' (' + fmtN(l.falta || l.dif) + ')').join(', '))),
+        x.lineas.filter(l => l.falta > 0 || l.dif > 0).map(l => etiquetaRep(l) + ' (' + fmtN(l.falta || l.dif) + ')').join(', '))),
       h('td', { class: 'n' }, x.t.falta ? chip('st-bad', 'i-bad', 'Faltan ' + fmtN(x.t.falta)) : chip('st-bad', 'i-bad', fmtN(x.t.dif) + ' sin justificar')))))))
       : h('div', { class: 'vacio' }, 'Ningún vale con faltantes en este filtro.'),
     conFaltaPieza.length > 8 ? h('button', { type: 'button', class: 'btn sm ver-tabla', onclick: () => irConFiltro({ estado: 'faltante' }) }, 'Ver los ' + conFaltaPieza.length) : null);
@@ -2437,8 +2499,8 @@ function graficoBarras(id, titulo, sub, filas, columnas) {
 function tarjetaRepuestos(lista) {
   const m = new Map();
   lista.filter(x => x.liquidado).forEach(x => x.lineas.forEach(l => {
-    const k = normal(l.descripcion);
-    if (!m.has(k)) m.set(k, { etiqueta: l.descripcion, uti: 0, dev: 0, salio: 0, vales: new Set() });
+    const k = normal(etiquetaRep(l));
+    if (!m.has(k)) m.set(k, { etiqueta: etiquetaRep(l) + (nombreRep(l) ? ' · ' + nombreRep(l) : ''), uti: 0, dev: 0, salio: 0, vales: new Set() });
     const r = m.get(k);
     r.uti += l.uti; r.dev += l.dev; r.salio += l.salio; r.vales.add(x.id);
   }));
@@ -2603,9 +2665,9 @@ function pintarDetalle(id) {
 
   const estadoLinea = l => (!x.liquidado ? h('span', { class: 'muted' }, 'Pendiente')
     : chip(l.estadoL === 'Completo' ? 'st-ok' : 'st-bad', l.estadoL === 'Completo' ? 'i-ok' : 'i-bad', l.estadoL));
-  const notaLinea = l => [l.codigo, l.agregada ? 'agregado al liquidar' : '', !l.requiereVieja ? 'no regresa pieza vieja' : '', l.obs].filter(Boolean).join(' · ');
+  const notaLinea = l => [nombreRep(l), l.agregada ? 'agregado al liquidar' : '', !l.requiereVieja ? 'no regresa pieza vieja' : '', l.obs].filter(Boolean).join(' · ');
   const listaL = h('div', { class: 'solo-angosto' }, x.lineas.map(l => h('div', { class: 'det-l' },
-    h('div', { class: 'nom' }, l.descripcion),
+    h('div', { class: 'nom mono-rep' }, etiquetaRep(l)),
     notaLinea(l) ? h('div', { class: 'muted', style: { fontSize: '13px' } }, notaLinea(l)) : null,
     h('div', { class: 'cifras' },
       h('span', null, 'Salió ', h('b', null, fmtN(l.salio))),
@@ -2615,7 +2677,7 @@ function pintarDetalle(id) {
   const tabla = h('div', { class: 'tabla-wrap solo-ancho' }, h('table', { class: 'tbl' },
     h('thead', null, h('tr', null, h('th', null, 'Repuesto'), h('th', { class: 'n' }, 'Salió'), h('th', { class: 'n' }, 'Devolvió'), h('th', { class: 'n' }, 'Utilizó'), h('th', { class: 'n' }, 'Pieza vieja'), h('th', null, 'Estado'))),
     h('tbody', null, x.lineas.map(l => h('tr', null,
-      h('td', null, h('div', { class: 'nom' }, l.descripcion), h('div', { class: 'muted', style: { fontSize: '12.5px' } }, notaLinea(l))),
+      h('td', null, h('div', { class: 'nom mono-rep' }, etiquetaRep(l)), h('div', { class: 'muted', style: { fontSize: '12.5px' } }, notaLinea(l))),
       h('td', { class: 'n' }, fmtN(l.salio)),
       h('td', { class: 'n' }, x.liquidado ? fmtN(l.dev) : '—'),
       h('td', { class: 'n' }, x.liquidado ? fmtN(l.uti) : '—'),
@@ -2737,7 +2799,7 @@ function filasExport(lista) {
   const lineas = [];
   lista.forEach(x => x.lineas.forEach(l => lineas.push({
     'ID vale': x.id, 'No. vale físico': x.v.numero || '', 'Fecha salida': x.v.fecha, 'Unidad': x.v.unidad, 'Mecánico': x.v.mecanico,
-    'Código': l.codigo || '', 'Repuesto': l.descripcion, 'Regresa pieza vieja': l.requiereVieja ? 'Sí' : 'No', 'Salió': l.salio,
+    'Código': l.codigo || '', 'Repuesto': l.codigo ? nombreRep(l) : (l.descripcion || ''), 'Regresa pieza vieja': l.requiereVieja ? 'Sí' : 'No', 'Salió': l.salio,
     'Devuelto sin usar': x.liquidado ? l.dev : '', 'Utilizado': x.liquidado ? l.uti : '',
     'Pieza vieja a regresar': x.liquidado ? l.req : '', 'Pieza vieja recibida': x.liquidado ? l.rec : '',
     'Pieza vieja faltante': x.liquidado ? l.falta : '', 'Sin justificar': x.liquidado ? l.dif : '',
@@ -2813,7 +2875,7 @@ function onRuta() {
     }
   }
   S.ruta = r;
-  if (r.vista === 'vale') {
+  if (r.vista === 'vale' && S.error !== 'pin') {
     if (!S.vistaActual || VISTAS_BASE.indexOf(String(S.montada).split('/')[0]) < 0) montar(S.base, null);
     marcarPestana('vale');
     pintarDetalle(r.id);
@@ -2830,6 +2892,21 @@ function marcarPestana(vista) {
 }
 
 function montar(vista, id) {
+  // Si la hoja pide PIN y no hay uno válido, solo se muestra el candado.
+  const bloqueado = S.error === 'pin';
+  document.body.classList.toggle('bloqueado', bloqueado);
+  if (bloqueado) {
+    cerrarCajon();
+    document.body.classList.remove('en-form');
+    if (S.montada === 'candado') return;
+    $('#main').replaceChildren(pantallaPinLectura());
+    S.form = null;
+    rutaForm = null;
+    S.montada = 'candado';
+    S.vistaActual = { candado: true };
+    window.scrollTo(0, 0);
+    return;
+  }
   const clave = vista + '/' + (id || '');
   marcarPestana(vista);
   document.body.classList.toggle('en-form', FORMULARIOS.indexOf(vista) >= 0 || vista === 'listo');
@@ -2872,16 +2949,31 @@ function refrescarVista(forzar) {
   pintarRed();
   const va = S.vistaActual;
   const enDetalle = S.ruta.vista === 'vale';
-  if (!va || va.esperando || forzar) {
+  // Al pasar de abierto a candado (o al revés) se vuelve a montar la vista, salvo con un formulario a medias.
+  const cambioCandado = !S.form && (S.error === 'pin') !== (S.montada === 'candado');
+  if (!va || va.esperando || forzar || cambioCandado) {
     S.montada = null;
     if (enDetalle) montar(S.base, null); else montar(S.ruta.vista, S.ruta.id);
   } else if (va.actualizar) {
     va.actualizar();
   }
-  if (enDetalle) pintarDetalle(S.ruta.id);
+  if (enDetalle && S.error !== 'pin') pintarDetalle(S.ruta.id);
 }
 
 /* ═══════════════════════ Encabezado ═══════════════════════ */
+/* Cierra la sesión en este equipo: olvida el PIN y, si el tablero pide PIN, vuelve al candado. */
+function salir() {
+  sesion.del('lectura');
+  store.del('lectura');
+  store.del('firma');
+  store.del('cache');
+  S.datos = null;
+  S.idx = null;
+  if (store.get('pidePin', false)) { S.error = 'pin'; S.errorPin = ''; }
+  refrescarVista(true);
+  cargar();
+}
+
 function temaOscuro() {
   const t = document.documentElement.getAttribute('data-theme');
   if (t) return t === 'dark';
@@ -2925,7 +3017,7 @@ function prepararEncabezado() {
         : null,
       firma || lectura ? h('hr') : null,
       firma ? itemMenu('i-lock', 'Olvidar mi PIN en este teléfono', () => { store.del('firma'); toast('Este teléfono ya no recuerda tu PIN.'); }, cerrar, nombre(firma.nombre)) : null,
-      lectura ? itemMenu('i-lock', 'Salir del tablero', () => { sesion.del('lectura'); store.del('lectura'); S.datos = null; S.idx = null; store.del('cache'); cargar(); }, cerrar) : null,
+      firma || lectura ? itemMenu('i-lock', 'Salir del tablero', () => salir(), cerrar, store.get('pidePin', false) ? 'Para volver a entrar se pide el PIN' : null) : null,
     ];
   });
   $('#pie').textContent = 'Vales de asistencia · versión ' + VERSION + ' · Los datos se guardan en la hoja de Google de bodega y las fotos en Google Drive.';
@@ -2939,6 +3031,8 @@ async function iniciar() {
   if (c && c.d && apiLista()) {
     try { aplicarDatos(c.d, true); S.ultimaCarga = c.t; } catch (e) { store.del('cache'); S.datos = null; S.idx = null; }
   }
+  // Si el tablero pide PIN y este equipo no tiene uno guardado, se muestra el candado de una vez.
+  if (!S.idx && apiLista() && !pinLectura() && store.get('pidePin', true)) S.error = 'pin';
   if (!location.hash) history.replaceState(null, '', '#' + store.get('vista', 'bodega'));
   onRuta();
   try { S.pendientes = await cola.todas(); } catch (e) { S.pendientes = []; }
