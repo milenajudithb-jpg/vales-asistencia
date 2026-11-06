@@ -2412,6 +2412,16 @@ function contenidoTablero() {
       T.falta ? { link: h('button', { type: 'button', class: 'k-link', onclick: () => irConFiltro({ estado: 'faltante' }) }, 'Ver vales con faltantes') } : null),
     kpi('Sin justificar', fmtN(T.dif), T.dif ? 'Repuestos que salieron y no se devolvieron ni se instalaron' : 'Todo lo que salió está devuelto o instalado'));
 
+  // Resumen de repuestos (solo vales liquidados, para que las cifras cuadren)
+  const liqs = lista.filter(x => x.liquidado && !x.anulado);
+  const salioLiq = redondea(liqs.reduce((n, x) => n + x.t.salio, 0));
+  const kpisRep = h('div', { class: 'kpis', style: { marginTop: '10px' } },
+    kpi('Asistencias', fmtN(T.liq), 'Vales liquidados (' + fmtN(lista.length) + ' en total, ' + fmtN(abiertos.length) + ' abiertos)'),
+    kpi('Repuestos que salieron', fmtN(salioLiq), 'Piezas entregadas por bodega en vales liquidados'),
+    kpi('Devueltos sin usar', fmtN(T.dev), salioLiq ? fmtN(pct(T.dev, salioLiq)) + '% de lo que salió regresó a bodega' : ''),
+    kpi('Instalados', fmtN(T.uti), salioLiq ? fmtN(pct(T.uti, salioLiq)) + '% de lo que salió se utilizó' : ''),
+    kpi('Piezas viejas recibidas', fmtN(T.rec), T.req ? 'De ' + fmtN(T.req) + ' que debían regresar · faltan ' + fmtN(T.falta) : 'Aún no hay piezas que debían regresar'));
+
   // Por liquidar y faltantes
   const filaPend = x => h('tr', { class: 'clic', tabindex: '0', onclick: () => abrirDetalle(x.id), onkeydown: e => { if (e.key === 'Enter') abrirDetalle(x.id); } },
     h('td', null, h('span', { class: 'mono' }, x.id), h('div', { class: 'muted', style: { fontSize: '13px' } }, x.v.numero ? 'No. ' + x.v.numero : '')),
@@ -2435,7 +2445,7 @@ function contenidoTablero() {
       : h('div', { class: 'vacio' }, 'Ningún vale con faltantes en este filtro.'),
     conFaltaPieza.length > 8 ? h('button', { type: 'button', class: 'btn sm ver-tabla', onclick: () => irConFiltro({ estado: 'faltante' }) }, 'Ver los ' + conFaltaPieza.length) : null);
 
-  return [kpis,
+  return [kpis, kpisRep,
     h('div', { class: 'grid2', style: { marginTop: '16px' } }, cPend, cFalt),
     h('div', { style: { marginTop: '16px' } }, tarjetaMecanicos(lista)),
     h('div', { class: 'grid2', style: { marginTop: '16px' } }, tarjetaRepuestos(lista), tarjetaUnidades(lista)),
