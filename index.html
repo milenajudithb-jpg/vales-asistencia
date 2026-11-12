@@ -328,6 +328,22 @@ table.tbl{width:100%;border-collapse:collapse;font-size:14.5px}
 .tbl tr:last-child td{border-bottom:0}
 .tbl td.n,.tbl th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tbl tfoot td{font-weight:700;border-top:1px solid var(--line)}
+.mov-graf{display:grid;gap:10px;margin:4px 0 18px}
+.mov-g-f{display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:center}
+.mov-g-f .et{font-size:13.5px;color:var(--ink-2);font-weight:600;white-space:nowrap}
+.mov-g-b{display:grid;gap:4px}
+.mov-g-b>div{display:flex;align-items:center;gap:8px;min-height:16px}
+.mov-g-b i{display:block;height:14px;border-radius:3px;min-width:2px}
+.mov-g-b i.sale{background:var(--accent)}
+.mov-g-b i.entra{background:var(--ok)}
+.mov-g-b span{font-size:13px;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.mov-leyenda{display:flex;gap:16px;flex-wrap:wrap;font-size:13.5px;color:var(--ink-2);margin-bottom:10px}
+.mov-leyenda b{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.mov-det td{background:var(--panel-2);padding:10px 14px}
+.mov-det .tbl{margin:0}
+.tbl td.sale-c{color:var(--link);font-weight:700}
+.tbl td.entra-c{color:var(--ok-ink);font-weight:700}
+
 .tbl tbody tr.clic{cursor:pointer}
 .tbl tbody tr.clic:hover td{background:var(--panel-2)}
 .tbl .nom{font-weight:600}
@@ -2445,7 +2461,7 @@ function contenidoTablero() {
       : h('div', { class: 'vacio' }, 'Ningún vale con faltantes en este filtro.'),
     conFaltaPieza.length > 8 ? h('button', { type: 'button', class: 'btn sm ver-tabla', onclick: () => irConFiltro({ estado: 'faltante' }) }, 'Ver los ' + conFaltaPieza.length) : null);
 
-  return [kpis, kpisRep,
+  return [kpis, kpisRep, tarjetaMovimiento(lista),
     h('div', { class: 'grid2', style: { marginTop: '16px' } }, cPend, cFalt),
     h('div', { style: { marginTop: '16px' } }, tarjetaMecanicos(lista)),
     h('div', { class: 'grid2', style: { marginTop: '16px' } }, tarjetaRepuestos(lista), tarjetaUnidades(lista)),
@@ -2561,6 +2577,76 @@ function tarjetaMeses(lista) {
       h('tbody', null, filas.map(r => h('tr', { class: 'clic', tabindex: '0', onclick: () => irConFiltro({ periodo: 'mes:' + r.mes }, 'tablero'), onkeydown: e => { if (e.key === 'Enter') irConFiltro({ periodo: 'mes:' + r.mes }, 'tablero'); } },
         h('td', { class: 'nom sinsalto' }, mesLargo(r.mes)), h('td', { class: 'n' }, fmtN(r.vales)), h('td', { class: 'n opc-movil' }, fmtN(r.abiertos)),
         h('td', { class: 'n' }, r.req ? pct(r.rec, r.req) + '%' : '—'), h('td', { class: 'n' }, fmtN(r.falta)), h('td', { class: 'n opc-movil' }, fmtN(r.dif))))))) : h('div', { class: 'vacio' }, 'Sin datos en este filtro.'));
+}
+
+/* Movimiento mensual de repuestos: cuántos salen de bodega y cuántos entran. */
+function tarjetaMovimiento(lista) {
+  const m = new Map();
+  const mesDe = k => { if (!m.has(k)) m.set(k, { mes: k, sale: 0, dev: 0, vie: 0, uti: 0, pend: 0, cods: new Map() }); return m.get(k); };
+  const codDe = (r, l) => {
+    const k = normal(etiquetaRep(l));
+    if (!r.cods.has(k)) r.cods.set(k, { et: etiquetaRep(l) + (nombreRep(l) ? ' · ' + nombreRep(l) : ''), sale: 0, dev: 0, vie: 0, uti: 0 });
+    return r.cods.get(k);
+  };
+  lista.filter(x => !x.anulado).forEach(x => {
+    const rs = mesDe(String(x.v.fecha).slice(0, 7));
+    x.lineas.forEach(l => { rs.sale += l.salio; codDe(rs, l).sale += l.salio; if (!x.liquidado) rs.pend += l.salio; });
+    if (x.liquidado) {
+      const rl = mesDe(String(x.v.fechaLiq || x.v.fecha).slice(0, 7));
+      x.lineas.forEach(l => {
+        const d = l.dev || 0, v = l.rec || 0, u = l.uti || 0;
+        rl.dev += d; rl.vie += v; rl.uti += u;
+        const c = codDe(rl, l); c.dev += d; c.vie += v; c.uti += u;
+      });
+    }
+  });
+  const filas = [...m.values()].map(r => Object.assign(r, { sale: redondea(r.sale), dev: redondea(r.dev), vie: redondea(r.vie), uti: redondea(r.uti), pend: redondea(r.pend), entra: redondea(r.dev + r.vie) }))
+    .sort((a, b) => b.mes.localeCompare(a.mes));
+  const tot = filas.reduce((t, r) => ({ sale: t.sale + r.sale, dev: t.dev + r.dev, vie: t.vie + r.vie, entra: t.entra + r.entra, uti: t.uti + r.uti, pend: t.pend + r.pend }), { sale: 0, dev: 0, vie: 0, entra: 0, uti: 0, pend: 0 });
+  const abierto = S.mesMov || '';
+  const recargar = e => e.target.closest('.card').replaceWith(tarjetaMovimiento(lista));
+  const alternar = mes => e => { S.mesMov = S.mesMov === mes ? '' : mes; recargar(e); };
+
+  const cron = filas.slice().reverse();
+  const max = Math.max(1, ...filas.map(r => Math.max(r.sale, r.entra)));
+  const graf = h('div', null,
+    h('div', { class: 'mov-leyenda' }, h('span', null, h('b', { style: { background: 'var(--accent)' } }), 'Salen de bodega'), h('span', null, h('b', { style: { background: 'var(--ok)' } }), 'Entran a bodega (devueltos + piezas viejas)')),
+    h('div', { class: 'mov-graf', role: 'list' }, cron.map(r => h('div', { class: 'mov-g-f', role: 'listitem', 'aria-label': mesLargo(r.mes) + ': salen ' + fmtN(r.sale) + ', entran ' + fmtN(r.entra) },
+      h('span', { class: 'et' }, mesLargo(r.mes)),
+      h('div', { class: 'mov-g-b' },
+        h('div', null, h('i', { class: 'sale', style: { width: (r.sale / max * 80).toFixed(1) + '%' } }), h('span', null, fmtN(r.sale))),
+        h('div', null, h('i', { class: 'entra', style: { width: (r.entra / max * 80).toFixed(1) + '%' } }), h('span', null, fmtN(r.entra))))))));
+
+  const detalle = r => {
+    const cs = [...r.cods.values()].sort((a, b) => (b.sale + b.dev + b.vie) - (a.sale + a.dev + a.vie));
+    return h('tr', { class: 'mov-det' }, h('td', { colspan: 7 },
+      h('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '6px' } }, 'Repuestos de ' + mesLargo(r.mes) + ' (los 15 con más movimiento).'),
+      h('div', { class: 'tabla-wrap' }, h('table', { class: 'tbl' },
+        h('thead', null, h('tr', null, h('th', null, 'Repuesto'), h('th', { class: 'n' }, 'Salen'), h('th', { class: 'n' }, 'Devueltos'), h('th', { class: 'n' }, 'Piezas viejas'), h('th', { class: 'n' }, 'Instalados'))),
+        h('tbody', null, cs.slice(0, 15).map(c => h('tr', null, h('td', { class: 'nom' }, c.et), h('td', { class: 'n' }, fmtN(redondea(c.sale))), h('td', { class: 'n' }, fmtN(redondea(c.dev))), h('td', { class: 'n' }, fmtN(redondea(c.vie))), h('td', { class: 'n' }, fmtN(redondea(c.uti))))))))));
+  };
+
+  const filasTabla = [];
+  filas.forEach(r => {
+    filasTabla.push(h('tr', { class: 'clic', tabindex: '0', 'aria-expanded': String(abierto === r.mes), onclick: alternar(r.mes), onkeydown: e => { if (e.key === 'Enter') alternar(r.mes)(e); } },
+      h('td', { class: 'nom sinsalto' }, mesLargo(r.mes)),
+      h('td', { class: 'n sale-c' }, fmtN(r.sale)),
+      h('td', { class: 'n' }, fmtN(r.dev)),
+      h('td', { class: 'n' }, fmtN(r.vie)),
+      h('td', { class: 'n entra-c' }, fmtN(r.entra)),
+      h('td', { class: 'n opc-movil' }, fmtN(r.uti)),
+      h('td', { class: 'n opc-movil' }, r.pend ? chip('st-warn', 'i-clock', fmtN(r.pend)) : fmtN(0))));
+    if (abierto === r.mes) filasTabla.push(detalle(r));
+  });
+
+  return h('div', { class: 'card card-pad', style: { marginTop: '16px' } },
+    h('h3', null, 'Movimiento mensual de repuestos'),
+    h('p', { class: 'sub' }, 'Salen = repuestos entregados por bodega, por fecha de salida del vale (incluye vales abiertos). Entran = repuestos devueltos sin usar + piezas viejas recibidas, por fecha de liquidación. Instalados = repuestos utilizados en vales liquidados. Toca un mes para ver el detalle por repuesto.'),
+    filas.length ? [graf, h('div', { class: 'tabla-wrap' }, h('table', { class: 'tbl' },
+      h('thead', null, h('tr', null, h('th', null, 'Mes'), h('th', { class: 'n' }, 'Salen'), h('th', { class: 'n' }, 'Devueltos sin usar'), h('th', { class: 'n' }, 'Piezas viejas'), h('th', { class: 'n' }, 'Total entran'), h('th', { class: 'n opc-movil' }, 'Instalados'), h('th', { class: 'n opc-movil' }, 'Sin liquidar'))),
+      h('tbody', null, filasTabla),
+      h('tfoot', null, h('tr', null, h('td', null, 'Total'), h('td', { class: 'n' }, fmtN(redondea(tot.sale))), h('td', { class: 'n' }, fmtN(redondea(tot.dev))), h('td', { class: 'n' }, fmtN(redondea(tot.vie))), h('td', { class: 'n' }, fmtN(redondea(tot.entra))), h('td', { class: 'n opc-movil' }, fmtN(redondea(tot.uti))), h('td', { class: 'n opc-movil' }, fmtN(redondea(tot.pend)))))))]
+      : h('div', { class: 'vacio' }, 'Sin datos en este filtro.'));
 }
 
 /* ═══════════════════════ Lista de vales ═══════════════════════ */
